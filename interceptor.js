@@ -444,6 +444,32 @@
     return true;
   }
 
+  /**
+   * Renderiza un objeto { clave: valor } como tabla en consola.
+   *
+   * console.table siempre genera una primera columna "(index)". Si le pasamos
+   * un OBJETO (no un array), esa columna muestra las CLAVES reales (currency,
+   * value, ...) en lugar de indices numericos 0,1,2. Asi evitamos la columna
+   * de numeros que agregaba la version anterior: la primera columna pasa a ser
+   * directamente el nombre del parametro / propiedad / campo.
+   *
+   * El segundo argumento (valueLabel) nombra la columna de valores segun el
+   * contexto (parámetro, propiedad, campo...).
+   *
+   *   logTable({ currency: "ARS", value: 10 }, "parámetro")
+   *   => filas indexadas por "currency" y "value", columna de valor "parámetro"
+   */
+  function logTable(obj, valueLabel) {
+    var label = valueLabel || "valor";
+    var rows = {};
+    Object.keys(obj).forEach(function (k) {
+      var row = {};
+      row[label] = obj[k];
+      rows[k] = row;
+    });
+    console.table(rows);
+  }
+
   function logEvent(evt, transport) {
     var name = evt.event_name || "(sin event_name)";
     // El evento sintetico de propiedades de usuario se distingue en azul y con
@@ -468,13 +494,13 @@
     // propio encabezado visual, asi que no duplicamos un label previo.
     if (!isEmpty(evt.event_params)) {
       console.groupCollapsed("%cevent_params", STYLE_SECTION);
-      console.table(evt.event_params);
+      logTable(evt.event_params, "valor");
       console.groupEnd();
     }
 
     if (!isEmpty(evt.user_params)) {
       console.groupCollapsed("%cuser_params", STYLE_SECTION);
-      console.table(evt.user_params);
+      logTable(evt.user_params, "valor");
       console.groupEnd();
     }
 
@@ -484,22 +510,16 @@
         STYLE_SECTION,
         "color:#888;font-weight:normal;"
       );
-      // console.table trunca los valores largos y no deja verlos completos.
-      // Logueamos cada item como objeto expandible: al desplegarlo se ve el
-      // valor completo de cada propiedad (item_name, urls, etc.).
+      // Cada item es un grupo colapsable (expandir/contraer). Dentro, una tabla
+      // con los parametros del item: primera columna "(index)" = nombre del
+      // parametro, segunda columna "valor" = su valor.
       evt.items.forEach(function (item, idx) {
         console.groupCollapsed(
           "%c[" + idx + "]%c " + (item.item_name || item.item_id || ""),
           "color:#1F9BF0;font-weight:bold;",
           "color:#666;font-weight:normal;"
         );
-        Object.keys(item).forEach(function (k) {
-          console.log(
-            "%c" + k + ":%c " + item[k],
-            "color:#888;",
-            "color:inherit;"
-          );
-        });
+        logTable(item, "valor");
         console.groupEnd();
       });
       console.groupEnd();
@@ -513,14 +533,14 @@
         "%canalytics info",
         "color:#0F9D58;font-weight:bold;"
       );
-      console.table(info);
+      logTable(info, "valor");
       console.groupEnd();
     }
 
     // Parametros crudos del hit que no reconocemos (por si aportan algo).
     if (evt._raw && !isEmpty(evt._raw)) {
       console.groupCollapsed("%craw params", "color:#888;font-weight:bold;");
-      console.table(evt._raw);
+      logTable(evt._raw, "valor");
       console.groupEnd();
     }
 
