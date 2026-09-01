@@ -25,11 +25,32 @@
   // PAD_REQUEST_STATE mas abajo). No lo enviamos tambien de forma proactiva
   // para evitar un doble mensaje al cargar la pagina.
 
+  // Solo el frame principal debe recargar la pagina; si recargara cada iframe
+  // por separado romperia la navegacion.
+  var IS_TOP_FRAME = (function () {
+    try {
+      return window.top === window;
+    } catch (e) {
+      return false; // acceso cross-origin a window.top: no somos el top
+    }
+  })();
+
   // Reenvia los cambios de estado en tiempo real.
   try {
     chrome.storage.onChanged.addListener(function (changes, area) {
       if (area === "local" && changes[STORAGE_KEY]) {
-        sendEnabled(changes[STORAGE_KEY].newValue !== false);
+        var change = changes[STORAGE_KEY];
+        var newEnabled = change.newValue !== false;
+        var oldEnabled = change.oldValue !== false;
+        sendEnabled(newEnabled);
+
+        // Al ENCENDER la extension (apagado -> encendido) recargamos la pagina
+        // para capturar los hits desde el inicio de la carga (page_view, etc.),
+        // que de otro modo ya habrian ocurrido antes de activar la captura.
+        // No recargamos al apagar ni cuando el estado no cambia.
+        if (IS_TOP_FRAME && newEnabled && !oldEnabled) {
+          window.location.reload();
+        }
       }
     });
   } catch (e) {
