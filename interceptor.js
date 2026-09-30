@@ -38,10 +38,36 @@
 
   var STATE_ANNOUNCED = false;
   var STATE_RECEIVED = false;
+
+  // Cola de hits capturados ANTES de conocer el estado real (on/off).
+  // ---------------------------------------------------------------------------
+  // El estado real llega de forma asincrona desde el bridge (que a su vez lee
+  // chrome.storage). Pero GA4 dispara su page_view inicial muy temprano en la
+  // carga de la pagina, a veces antes de que ese estado asincrono confirme.
+  // Si en ese instante procesaramos o descartaramos el hit segun un estado aun
+  // no confirmado, perderiamos el page_view inicial en navegaciones normales
+  // (por ejemplo al pasar de un dominio a otro). Para no depender del timing,
+  // mientras el estado no este confirmado ENCOLAMOS los hits en vez de
+  // procesarlos o descartarlos. Al confirmarse:
+  //   - si quedo activado -> procesamos toda la cola (no se pierde nada);
+  //   - si quedo desactivado -> descartamos la cola.
+  var PENDING_HITS = [];
+  var MAX_PENDING = 200; // tope de seguridad para no crecer sin limite
+
+  function flushPending() {
+    var queued = PENDING_HITS;
+    PENDING_HITS = [];
+    if (!ENABLED) return; // desactivado: se descartan
+    queued.forEach(function (h) {
+      emit(h.url, h.body, h.transport);
+    });
+  }
+
   window.addEventListener("message", function (ev) {
     if (ev.source !== window) return;
     var data = ev.data;
     if (!data || data.source !== "PAD_BRIDGE" || data.type !== "PAD_SET_ENABLED") return;
+    var firstConfirmation = !STATE_RECEIVED;
     STATE_RECEIVED = true;
     var prev = ENABLED;
     ENABLED = data.enabled !== false;
@@ -56,6 +82,9 @@
         "color:#888;"
       );
     }
+    // Al confirmar el estado por primera vez, procesamos (o descartamos) los
+    // hits que se capturaron mientras aun no lo conociamos.
+    if (firstConfirmation) flushPending();
   });
 
   // Pedimos el estado actual al bridge. Reintentamos una vez por si este
@@ -70,7 +99,18 @@
   }
   requestState();
   setTimeout(function () {
-    if (!STATE_RECEIVED) requestState();
+    if (!STATE_RECEIVED) {
+      requestState();
+      // Salvaguarda: si tras el reintento el estado sigue sin llegar (bridge no
+      // disponible), asumimos el default (activado) y procesamos la cola para
+      // no perder los hits tempranos.
+      setTimeout(function () {
+        if (!STATE_RECEIVED) {
+          STATE_RECEIVED = true;
+          flushPending();
+        }
+      }, 300);
+    }
   }, 300);
 
   // ---------------------------------------------------------------------------
@@ -272,7 +312,12 @@
     af: "affiliation",
     pr: "price",
     qt: "quantity",
-    lo: "location_id"
+    lo: "location_id",
+    // Parametros de promocion (item-scoped) del ecommerce GA4.
+    cn: "creative_name",
+    cs: "creative_slot",
+    pi: "promotion_id",
+    pn: "promotion_name"
   };
 
   function parseItem(raw) {
@@ -280,18 +325,27 @@
     // Los pares vienen separados por "~".
     // - Parametros estandar: abreviatura de 2 letras + valor. Ej: "idSKU1", "pr9.99".
     // - Parametros custom (item-scoped): gtag los codifica como par clave/valor
-    //   con un indice numerico: "k<n><nombre>" seguido de "v<n><valor>".
-    //   Ese indice numerico es lo que provocaba el "0" pegado al nombre/valor.
+    //   con un indice numerico compartido: "k<n><nombre>" seguido de "v<n><valor>".
+    //   Ejemplo: "k0item_list_price" + "v0324999" -> item_list_price = 324999.
+    //   El indice <n> es el mismo en el par k/v y sirve para saber cuantos
+    //   caracteres de prefijo quitar del token de valor (importante cuando el
+    //   valor tambien es numerico y quedaria pegado al indice).
     var tokens = raw.split("~");
     for (var i = 0; i < tokens.length; i++) {
       var token = tokens[i];
       if (!token) continue;
 
-      // Custom item parameter: "k" + indice + nombre, valor en el token "v" + indice.
-      if (token.charAt(0) === "k" && /^k\d/.test(token)) {
-        var customKey = token.replace(/^k\d+/, ""); // quita "k" y el indice numerico
+      // Custom item parameter: "k" + indice + nombre; su valor en el token "v" + mismo indice.
+      var kMatch = /^k(\d+)(.*)$/.exec(token);
+      if (kMatch) {
+        var idx = kMatch[1];        // indice numerico (p. ej. "0", "1", "12")
+        var customKey = kMatch[2];  // nombre del parametro (p. ej. "item_list_price")
         var next = tokens[i + 1] || "";
-        var customVal = /^v\d/.test(next) ? next.replace(/^v\d+/, "") : next;
+        // Del token de valor quitamos SOLO "v" + ese mismo indice, no todos los
+        // digitos: asi un valor numerico como "v0324999" -> "324999" (antes un
+        // regex codicioso /^v\d+/ se comia los digitos del valor y quedaba vacio).
+        var vPrefix = "v" + idx;
+        var customVal = next.indexOf(vPrefix) === 0 ? next.slice(vPrefix.length) : next;
         if (customKey) item[customKey] = coerceNumber(customVal);
         i++; // consume el token de valor
         continue;
@@ -472,20 +526,42 @@
 
   function logEvent(evt, transport) {
     var name = evt.event_name || "(sin event_name)";
-    // El evento sintetico de propiedades de usuario se distingue en azul y con
+    // El evento sintetico de propiedades de usuario se distingue en morado y con
     // una etiqueta, para que quede claro que lo genera la extension (no es un
     // hit literal de GA4, sino la deteccion de un cambio de user params).
-    var titleStyle = evt._synthetic
-      ? "background:#7B48F0;color:#fff;font-weight:bold;padding:2px 8px;border-radius:3px;"
-      : STYLE_TITLE;
-    var tag = evt._synthetic ? "  %c(sintetico)" : "  %c";
-    console.groupCollapsed(
-      "%cGA4%c  " + name + "  %c[" + transport + "]" + tag,
-      titleStyle,
-      "font-weight:bold;color:inherit;",
-      "color:#888;font-weight:normal;",
-      "color:#7B48F0;font-weight:normal;font-style:italic;"
-    );
+    // Todo el renglon del titulo se resalta con un mismo color de fondo y con la
+    // letra levemente mas grande, para que cada evento sea facil de distinguir.
+    var bg = evt._synthetic ? "#7B48F0" : "#1F9BF0";
+    // Estilo comun a todo el renglon: mismo fondo y tamano de letra mayor.
+    var rowStyle = "background:" + bg + ";font-size:15px;padding:2px 0;";
+    // Rellenamos el nombre a un ancho fijo con espacios para que el resaltado
+    // tenga la MISMA longitud en todos los eventos (aspecto uniforme). Si algun
+    // nombre supera el ancho, no se recorta (solo no se agrega relleno).
+    var NAME_WIDTH = 26;
+    var paddedName = name.length < NAME_WIDTH
+      ? name + Array(NAME_WIDTH - name.length + 1).join(" ")
+      : name;
+    // El apartado final ("[transport]") cierra el renglon. Para los eventos
+    // sinteticos agregamos ademas la etiqueta "(sintetico)" con su propio %c.
+    if (evt._synthetic) {
+      console.groupCollapsed(
+        "%c GA4 %c " + paddedName + " %c[" + transport + "] %c(sintetico)",
+        rowStyle + "color:#000;font-weight:bold;border-radius:3px 0 0 3px;padding-left:8px;",
+        rowStyle + "color:#fff;font-weight:bold;",
+        rowStyle + "color:#000;font-weight:normal;font-style:italic;padding-right:8px;border-radius:0 3px 3px 0;",
+        "color:#7B48F0;font-weight:normal;font-style:italic;"
+      );
+    } else {
+      console.groupCollapsed(
+        "%c GA4 %c " + paddedName + " %c[" + transport + "]",
+        // "GA4": texto negro, negrita.
+        rowStyle + "color:#000;font-weight:bold;border-radius:3px 0 0 3px;padding-left:8px;",
+        // nombre del evento: texto blanco, negrita.
+        rowStyle + "color:#fff;font-weight:bold;",
+        // "[transport]": texto negro, cursiva.
+        rowStyle + "color:#000;font-weight:normal;font-style:italic;border-radius:0 3px 3px 0;padding-right:8px;"
+      );
+    }
 
     // event_name como linea simple.
     console.log("%cevent_name:%c " + name, STYLE_SECTION, "font-weight:normal;");
@@ -620,17 +696,34 @@
   // Recibe el body en cualquier forma. Si es un Blob (caso comun de sendBeacon)
   // lo lee de forma asincrona y luego emite. En el resto de casos, sincrono.
   function handleCollect(url, body, transport) {
-    if (!ENABLED) return; // extension desactivada desde el popup
     if (!isCollectUrl(url)) return;
+
+    // Los Blob (sendBeacon) se leen de forma asincrona; convertimos a texto
+    // antes de decidir, para poder encolar el contenido ya legible.
     if (typeof Blob !== "undefined" && body instanceof Blob) {
       body.text().then(function (text) {
-        emit(url, text, transport);
+        dispatchHit(url, text, transport);
       }).catch(function () {
-        emit(url, null, transport);
+        dispatchHit(url, null, transport);
       });
       return;
     }
-    emit(url, typeof body === "string" ? body : bodyToString(body), transport);
+    dispatchHit(url, typeof body === "string" ? body : bodyToString(body), transport);
+  }
+
+  // Decide que hacer con un hit ya con su body en texto:
+  //   - si aun no confirmamos el estado -> lo encolamos (se resolvera al llegar);
+  //   - si esta desactivado -> se descarta;
+  //   - si esta activado -> se procesa en el momento.
+  function dispatchHit(url, body, transport) {
+    if (!STATE_RECEIVED) {
+      if (PENDING_HITS.length < MAX_PENDING) {
+        PENDING_HITS.push({ url: url, body: body, transport: transport });
+      }
+      return;
+    }
+    if (!ENABLED) return; // extension desactivada desde el popup
+    emit(url, body, transport);
   }
 
   // ---------------------------------------------------------------------------
