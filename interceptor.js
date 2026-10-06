@@ -503,25 +503,35 @@
    *
    * console.table siempre genera una primera columna "(index)". Si le pasamos
    * un OBJETO (no un array), esa columna muestra las CLAVES reales (currency,
-   * value, ...) en lugar de indices numericos 0,1,2. Asi evitamos la columna
-   * de numeros que agregaba la version anterior: la primera columna pasa a ser
-   * directamente el nombre del parametro / propiedad / campo.
+   * value, ...) en lugar de indices numericos 0,1,2.
    *
-   * El segundo argumento (valueLabel) nombra la columna de valores segun el
-   * contexto (parámetro, propiedad, campo...).
+   * Pasamos el objeto TAL CUAL a console.table (valores primitivos directos),
+   * en lugar de envolver cada valor en { valor: ... }. Antes ese envoltorio
+   * hacia que cada celda se mostrara como un objeto anidado ("Object" con
+   * { valor: 90 }) al expandir la vista de arbol en DevTools. Con el objeto
+   * plano, la tabla queda en dos columnas limpias: nombre del parametro y su
+   * valor, sin niveles intermedios.
    *
-   *   logTable({ currency: "ARS", value: 10 }, "parámetro")
-   *   => filas indexadas por "currency" y "value", columna de valor "parámetro"
+   * El segundo argumento (valueLabel) se mantiene por compatibilidad con las
+   * llamadas existentes, pero ya no se usa: console.table nombra la columna de
+   * valores como "Values" automaticamente.
+   *
+   *   logTable({ currency: "ARS", value: 10 })
+   *   => filas "currency" y "value" con sus valores en la columna "Values"
    */
   function logTable(obj, valueLabel) {
-    var label = valueLabel || "valor";
-    var rows = {};
+    // Pasamos un CLON superficial, no el objeto original. console.table (como
+    // console.log) guarda una REFERENCIA viva al objeto, no un snapshot. En
+    // cargas tempranas (document_start / page_view inicial) DevTools a veces
+    // evalua esa referencia de forma diferida y la pinta como "Object"
+    // colapsado SIN dibujar la grilla de la tabla, hasta que un re-render
+    // (p. ej. recargar la pagina) la fuerza. Clonar rompe esa referencia:
+    // DevTools serializa el estado actual y renderiza la tabla de inmediato.
+    var snapshot = {};
     Object.keys(obj).forEach(function (k) {
-      var row = {};
-      row[label] = obj[k];
-      rows[k] = row;
+      snapshot[k] = obj[k];
     });
-    console.table(rows);
+    console.table(snapshot);
   }
 
   function logEvent(evt, transport) {
