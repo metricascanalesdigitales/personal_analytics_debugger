@@ -408,6 +408,13 @@
         evt.items.push(parseItem(value));
         return;
       }
+      // currency: GA4 lo envia a nivel de hit con la clave abreviada "cu"
+      // (no como "ep.currency"). Es un event param, asi que lo normalizamos a
+      // event_params.currency. Se conserva como texto (codigo ISO 4217, ej. ARS).
+      if (key === "cu") {
+        evt.event_params.currency = value;
+        return;
+      }
       // Informacion reconocida que provee Analytics.
       if (META_KEYS.hasOwnProperty(key)) {
         var metaName = META_KEYS[key];
