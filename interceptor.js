@@ -672,13 +672,11 @@
       );
     }
 
-    // event_name como linea simple.
-    console.log("%cevent_name:%c " + name, STYLE_SECTION, "font-weight:normal;");
-
-    // Alerta de parametros obligatorios faltantes. Si el evento es uno de los
-    // recomendados por Google y le falta algun parametro obligatorio, se avisa
-    // DENTRO del mismo evento cuales faltan. No aplica a eventos sinteticos
-    // (los genera la extension, no la implementacion que auditamos).
+    // Alerta de parametros obligatorios faltantes. Se imprime POR ENCIMA del
+    // event_name para que se vea primero al expandir el evento. Si el evento es
+    // uno de los recomendados por Google y le falta algun parametro obligatorio,
+    // se avisa DENTRO del mismo evento cuales faltan. No aplica a eventos
+    // sinteticos (los genera la extension, no la implementacion que auditamos).
     if (!evt._synthetic) {
       var missing = getMissingRequiredParams(evt);
       if (missing.length) {
@@ -689,6 +687,9 @@
         );
       }
     }
+
+    // event_name como linea simple.
+    console.log("%cevent_name:%c " + name, STYLE_SECTION, "font-weight:normal;");
 
     // Solo se imprime la seccion si tiene contenido. La tabla ya lleva su
     // propio encabezado visual, asi que no duplicamos un label previo.
