@@ -486,6 +486,102 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Validacion de parametros obligatorios por evento
+  // ---------------------------------------------------------------------------
+  // Para los eventos recomendados por Google (GA4) definimos que parametros son
+  // obligatorios. Si al capturar un hit falta alguno de esos parametros, se
+  // emite una alerta DENTRO del mismo evento en consola, listando los que
+  // faltan. No se altera el hit real: la alerta es solo informativa para el
+  // desarrollador que esta depurando la implementacion.
+  //
+  // Cada entrada puede declarar:
+  //   required:  array de parametros que SIEMPRE deben estar presentes.
+  //   requireItems: true si el evento exige el array items (no vacio).
+  //   requiredItemFields: dentro de cada item, al menos uno de estos campos
+  //                       debe estar presente (p. ej. item_id o item_name).
+  //   requireCurrencyWithValue: true si, cuando se envia "value", tambien debe
+  //                             enviarse "currency" (regla condicional de GA4).
+  //
+  // Nota: el evento "login" usa "login_method" como parametro obligatorio por
+  // decision de esta implementacion (la doc oficial lo marca como recomendado).
+  var REQUIRED_PARAMS = {
+    // --- Ecommerce que exige items (+ currency si hay value) ---
+    add_payment_info:  { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
+    add_shipping_info: { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
+    add_to_cart:       { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
+    add_to_wishlist:   { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
+    begin_checkout:    { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
+    remove_from_cart:  { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
+    view_cart:         { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
+    view_item:         { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
+    view_item_list:    { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
+    select_item:       { requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    view_promotion:    { requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    purchase:          { required: ["transaction_id"], requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
+    refund:            { required: ["transaction_id"], requireCurrencyWithValue: true },
+    // --- Otros eventos recomendados con obligatorios ---
+    search:               { required: ["search_term"] },
+    view_search_results:  { required: ["search_term"] },
+    spend_virtual_currency: { required: ["virtual_currency_name", "value"] },
+    post_score:           { required: ["score"] },
+    unlock_achievement:   { required: ["achievement_id"] },
+    // --- login: obligatorio login_method (decision de esta implementacion) ---
+    login:             { required: ["login_method"] }
+  };
+
+  /**
+   * Valida un evento contra REQUIRED_PARAMS.
+   * Devuelve un array con los nombres de los parametros obligatorios ausentes.
+   * Si el evento no tiene reglas definidas, devuelve [] (sin alerta).
+   */
+  function getMissingRequiredParams(evt) {
+    var rule = REQUIRED_PARAMS[evt.event_name];
+    if (!rule) return [];
+
+    var missing = [];
+    var params = evt.event_params || {};
+
+    function hasParam(name) {
+      // Presente si la clave existe y su valor no es vacio/nulo.
+      var v = params[name];
+      return v !== undefined && v !== null && v !== "";
+    }
+
+    // Parametros simples obligatorios.
+    (rule.required || []).forEach(function (name) {
+      if (!hasParam(name)) missing.push(name);
+    });
+
+    // currency obligatorio cuando se envia value (regla condicional de GA4).
+    if (rule.requireCurrencyWithValue) {
+      var hasValue = hasParam("value");
+      if (hasValue && !hasParam("currency")) missing.push("currency");
+    }
+
+    // items obligatorio (array no vacio).
+    if (rule.requireItems) {
+      if (!evt.items || !evt.items.length) {
+        missing.push("items");
+      } else if (rule.requiredItemFields && rule.requiredItemFields.length) {
+        // Cada item debe tener al menos uno de los campos requeridos.
+        evt.items.forEach(function (item, idx) {
+          var ok = rule.requiredItemFields.some(function (f) {
+            var v = item[f];
+            return v !== undefined && v !== null && v !== "";
+          });
+          if (!ok) {
+            missing.push(
+              "items[" + idx + "]." + rule.requiredItemFields.join("|")
+            );
+          }
+        });
+      }
+    }
+
+    return missing;
+  }
+
+  // ---------------------------------------------------------------------------
   // Salida en consola
   // ---------------------------------------------------------------------------
   var STYLE_TITLE =
@@ -575,6 +671,21 @@
 
     // event_name como linea simple.
     console.log("%cevent_name:%c " + name, STYLE_SECTION, "font-weight:normal;");
+
+    // Alerta de parametros obligatorios faltantes. Si el evento es uno de los
+    // recomendados por Google y le falta algun parametro obligatorio, se avisa
+    // DENTRO del mismo evento cuales faltan. No aplica a eventos sinteticos
+    // (los genera la extension, no la implementacion que auditamos).
+    if (!evt._synthetic) {
+      var missing = getMissingRequiredParams(evt);
+      if (missing.length) {
+        console.log(
+          "%c Faltan parametros obligatorios %c " + missing.join(", "),
+          "background:#D93025;color:#fff;font-weight:bold;padding:2px 8px;border-radius:3px;",
+          "color:#D93025;font-weight:bold;"
+        );
+      }
+    }
 
     // Solo se imprime la seccion si tiene contenido. La tabla ya lleva su
     // propio encabezado visual, asi que no duplicamos un label previo.
