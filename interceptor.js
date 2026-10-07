@@ -505,20 +505,23 @@
   // Nota: el evento "login" usa "login_method" como parametro obligatorio por
   // decision de esta implementacion (la doc oficial lo marca como recomendado).
   var REQUIRED_PARAMS = {
-    // --- Ecommerce que exige items (+ currency si hay value) ---
-    add_payment_info:  { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
-    add_shipping_info: { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
-    add_to_cart:       { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
-    add_to_wishlist:   { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
-    begin_checkout:    { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
-    remove_from_cart:  { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
-    view_cart:         { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
-    view_item:         { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
-    view_item_list:    { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
-    select_item:       { requireItems: true, requiredItemFields: ["item_id", "item_name"] },
-    view_promotion:    { requireItems: true, requiredItemFields: ["item_id", "item_name"] },
-    purchase:          { required: ["transaction_id"], requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
-    refund:            { required: ["transaction_id"], requireCurrencyWithValue: true },
+    // --- Ecommerce ---
+    // Por decision de esta implementacion, currency y value se exigen SIEMPRE en
+    // los eventos de ecommerce (mas estricto que la doc oficial de GA4, que marca
+    // currency como obligatorio solo cuando se envia value).
+    add_payment_info:  { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    add_shipping_info: { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    add_to_cart:       { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    add_to_wishlist:   { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    begin_checkout:    { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    remove_from_cart:  { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    view_cart:         { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    view_item:         { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    view_item_list:    { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    select_item:       { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    view_promotion:    { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    purchase:          { required: ["currency", "value", "transaction_id"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    refund:            { required: ["currency", "value", "transaction_id"] },
     // --- Otros eventos recomendados con obligatorios ---
     search:               { required: ["search_term"] },
     view_search_results:  { required: ["search_term"] },
