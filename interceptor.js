@@ -524,7 +524,10 @@
     remove_from_cart:  { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
     view_cart:         { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
     view_item:         { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
-    view_item_list:    { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    // view_item_list: segun la doc oficial, value NO es obligatorio y currency
+    // es condicional (solo requerido si se envia value). Por eso aqui no se
+    // exige value y currency se valida con requireCurrencyWithValue.
+    view_item_list:    { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
     select_item:       { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
     view_promotion:    { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
     purchase:          { required: ["currency", "value", "transaction_id"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
