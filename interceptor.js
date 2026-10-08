@@ -408,6 +408,13 @@
         evt.items.push(parseItem(value));
         return;
       }
+      // currency: GA4 lo envia a nivel de hit con la clave abreviada "cu"
+      // (no como "ep.currency"). Es un event param, asi que lo normalizamos a
+      // event_params.currency. Se conserva como texto (codigo ISO 4217, ej. ARS).
+      if (key === "cu") {
+        evt.event_params.currency = value;
+        return;
+      }
       // Informacion reconocida que provee Analytics.
       if (META_KEYS.hasOwnProperty(key)) {
         var metaName = META_KEYS[key];
@@ -483,6 +490,108 @@
     // evento (ping de red, verificacion de consentimiento, keep-alive, etc.).
     // No aporta datos que auditar, asi que no generamos ningun evento.
     return events;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Validacion de parametros obligatorios por evento
+  // ---------------------------------------------------------------------------
+  // Para los eventos recomendados por Google (GA4) definimos que parametros son
+  // obligatorios. Si al capturar un hit falta alguno de esos parametros, se
+  // emite una alerta DENTRO del mismo evento en consola, listando los que
+  // faltan. No se altera el hit real: la alerta es solo informativa para el
+  // desarrollador que esta depurando la implementacion.
+  //
+  // Cada entrada puede declarar:
+  //   required:  array de parametros que SIEMPRE deben estar presentes.
+  //   requireItems: true si el evento exige el array items (no vacio).
+  //   requiredItemFields: dentro de cada item, al menos uno de estos campos
+  //                       debe estar presente (p. ej. item_id o item_name).
+  //   requireCurrencyWithValue: true si, cuando se envia "value", tambien debe
+  //                             enviarse "currency" (regla condicional de GA4).
+  //
+  // Nota: el evento "login" usa "login_method" como parametro obligatorio por
+  // decision de esta implementacion (la doc oficial lo marca como recomendado).
+  var REQUIRED_PARAMS = {
+    // --- Ecommerce ---
+    // Por decision de esta implementacion, currency y value se exigen SIEMPRE en
+    // los eventos de ecommerce (mas estricto que la doc oficial de GA4, que marca
+    // currency como obligatorio solo cuando se envia value).
+    add_payment_info:  { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    add_shipping_info: { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    add_to_cart:       { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    add_to_wishlist:   { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    begin_checkout:    { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    remove_from_cart:  { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    view_cart:         { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    view_item:         { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    // view_item_list: segun la doc oficial, value NO es obligatorio y currency
+    // es condicional (solo requerido si se envia value). Por eso aqui no se
+    // exige value y currency se valida con requireCurrencyWithValue.
+    view_item_list:    { requireItems: true, requiredItemFields: ["item_id", "item_name"], requireCurrencyWithValue: true },
+    select_item:       { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    view_promotion:    { required: ["currency", "value"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    purchase:          { required: ["currency", "value", "transaction_id"], requireItems: true, requiredItemFields: ["item_id", "item_name"] },
+    refund:            { required: ["currency", "value", "transaction_id"] },
+    // --- Otros eventos recomendados con obligatorios ---
+    search:               { required: ["search_term"] },
+    view_search_results:  { required: ["search_term"] },
+    spend_virtual_currency: { required: ["virtual_currency_name", "value"] },
+    post_score:           { required: ["score"] },
+    unlock_achievement:   { required: ["achievement_id"] },
+    // --- login: obligatorio login_method (decision de esta implementacion) ---
+    login:             { required: ["login_method"] }
+  };
+
+  /**
+   * Valida un evento contra REQUIRED_PARAMS.
+   * Devuelve un array con los nombres de los parametros obligatorios ausentes.
+   * Si el evento no tiene reglas definidas, devuelve [] (sin alerta).
+   */
+  function getMissingRequiredParams(evt) {
+    var rule = REQUIRED_PARAMS[evt.event_name];
+    if (!rule) return [];
+
+    var missing = [];
+    var params = evt.event_params || {};
+
+    function hasParam(name) {
+      // Presente si la clave existe y su valor no es vacio/nulo.
+      var v = params[name];
+      return v !== undefined && v !== null && v !== "";
+    }
+
+    // Parametros simples obligatorios.
+    (rule.required || []).forEach(function (name) {
+      if (!hasParam(name)) missing.push(name);
+    });
+
+    // currency obligatorio cuando se envia value (regla condicional de GA4).
+    if (rule.requireCurrencyWithValue) {
+      var hasValue = hasParam("value");
+      if (hasValue && !hasParam("currency")) missing.push("currency");
+    }
+
+    // items obligatorio (array no vacio).
+    if (rule.requireItems) {
+      if (!evt.items || !evt.items.length) {
+        missing.push("items");
+      } else if (rule.requiredItemFields && rule.requiredItemFields.length) {
+        // Cada item debe tener al menos uno de los campos requeridos.
+        evt.items.forEach(function (item, idx) {
+          var ok = rule.requiredItemFields.some(function (f) {
+            var v = item[f];
+            return v !== undefined && v !== null && v !== "";
+          });
+          if (!ok) {
+            missing.push(
+              "items[" + idx + "]." + rule.requiredItemFields.join("|")
+            );
+          }
+        });
+      }
+    }
+
+    return missing;
   }
 
   // ---------------------------------------------------------------------------
@@ -571,6 +680,22 @@
         // "[transport]": texto negro, cursiva.
         rowStyle + "color:#000;font-weight:normal;font-style:italic;border-radius:0 3px 3px 0;padding-right:8px;"
       );
+    }
+
+    // Alerta de parametros obligatorios faltantes. Se imprime POR ENCIMA del
+    // event_name para que se vea primero al expandir el evento. Si el evento es
+    // uno de los recomendados por Google y le falta algun parametro obligatorio,
+    // se avisa DENTRO del mismo evento cuales faltan. No aplica a eventos
+    // sinteticos (los genera la extension, no la implementacion que auditamos).
+    if (!evt._synthetic) {
+      var missing = getMissingRequiredParams(evt);
+      if (missing.length) {
+        console.log(
+          "%c Faltan parametros obligatorios %c " + missing.join(", "),
+          "background:#D93025;color:#fff;font-weight:bold;padding:2px 8px;border-radius:3px;",
+          "color:#D93025;font-weight:bold;"
+        );
+      }
     }
 
     // event_name como linea simple.
